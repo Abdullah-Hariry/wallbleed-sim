@@ -1,5 +1,4 @@
 import socket
-
 def encode_qname(domain: str) -> bytes:
     """
     Encode a domain name into DNS QNAME format (label-length format)
@@ -32,7 +31,7 @@ def send_query(sock, query_bytes: bytes, resolver_host: str, resolver_port: int)
     """
     return sock.sendto(query_bytes, (resolver_host, resolver_port))
 
-def receive_response(sock, timeout: float = 5.0):
+def receive_response(sock, timeout: float = 30.0):
     """
     Receive a DNS response via UDP
     Args:
