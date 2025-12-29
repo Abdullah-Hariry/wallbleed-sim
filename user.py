@@ -6,9 +6,11 @@ Sends DNS queries and receives responses
 Usage: python user.py <resolver_host> <resolver_port> <domain>
 Example: python user.py localhost 9000 www.example.com
 """
+
 import sys
 import socket
-from dnsUtils import encode_qname, send_query, receive_response
+from dnsUtils import build_dns_query, send_query, receive_response, format_hex
+
 
 def main():
     # Parse command line arguments
@@ -27,13 +29,14 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
     try:
-        # Encode domain to QNAME
-        query_bytes = encode_qname(domain)
-        print(f"Encoded query: {query_bytes.hex()}")
+        # Build full DNS query packet
+        query_bytes = build_dns_query(domain)
+        print(f"\nQuery packet ({len(query_bytes)} bytes):")
+        print(format_hex(query_bytes))
 
         # Send query
         bytes_sent = send_query(sock, query_bytes, resolver_host, resolver_port)
-        print(f"Sent {bytes_sent} bytes")
+        print(f"\nSent {bytes_sent} bytes")
 
         # Receive response
         response_bytes, server_addr = receive_response(sock, timeout=5.0)
@@ -42,8 +45,9 @@ def main():
             print("No response received (timeout)")
             sys.exit(1)
 
-        print(f"Received {len(response_bytes)} bytes from {server_addr}")
-        print(f"Response: {response_bytes.hex()}")
+        print(f"\nReceived {len(response_bytes)} bytes from {server_addr}")
+        print("Response:")
+        print(format_hex(response_bytes))
 
     finally:
         sock.close()

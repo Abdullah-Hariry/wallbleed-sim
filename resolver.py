@@ -2,7 +2,6 @@
 import sys
 import socket
 
-
 def parse_dns_query(data: bytes):
     txid = int.from_bytes(data[0:2], 'big')
 
