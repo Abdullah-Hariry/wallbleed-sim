@@ -5,7 +5,6 @@ Sends DNS queries as raw hex strings
 
 Usage: python user.py <resolver_host> <resolver_port> <hex_query>
 Example: python user.py localhost 9000 0000012000010000000000000866616365626f6f6b03636f6d0000010001
-
 Wallbleed probe example: python user.py localhost 9000 0000012000010000000000000133ff7474
 """
 
@@ -54,7 +53,7 @@ def show_query_breakdown(query_bytes):
             break
 
         if pos + length > len(query_bytes):
-            print(f"    ⚠️  WARNING: Length extends past packet end! (Wallbleed probe?)")
+            print(f"    Length extends past packet end (Wallbleed probe)")
             break
 
         label = query_bytes[pos:pos + length]
@@ -93,7 +92,7 @@ def main():
     hex_query = sys.argv[3]
 
     print("=" * 60)
-    print("DNS User Program - Raw Hex Mode")
+    print("DNS User Program")
     print("=" * 60)
     print(f"Target: {resolver_host}:{resolver_port}")
 
@@ -130,9 +129,9 @@ def main():
         expected_min_length = len(query_bytes) + 16
         if len(response_bytes) > expected_min_length + 50:
             leaked_bytes = len(response_bytes) - expected_min_length
-            print(f"\nPOTENTIAL WALLBLEED LEAK DETECTED!")
+            print(f"\nWALLBLEED LEAK DETECTED")
             print(f"Response is {leaked_bytes} bytes larger than expected")
-            print(f"This could indicate memory leakage")
+            print(f"This indicates memory leakage")
 
     finally:
         sock.close()
