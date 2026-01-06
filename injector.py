@@ -47,7 +47,7 @@ def parse_dns_query_vulnerable(data, udp_len):
     total_bytes_read = 0
 
     while True:
-        # BUG: No bounds checking
+        # BUG: No bounds checking against buffer size
         if pos >= len(data):
             break
 
@@ -61,6 +61,13 @@ def parse_dns_query_vulnerable(data, udp_len):
         total_bytes_read += 1
 
         if length == 0:
+            break
+
+        # NEW: Stop label parsing at packet boundary (like blackbox.c)
+        # This prevents leaked bytes from becoming part of the domain name
+        if pos >= udp_len:
+            # We've reached the packet boundary while parsing labels
+            # Don't continue reading labels from leaked memory
             break
 
         # BUG: Read label bytes without bounds checking
@@ -104,9 +111,6 @@ def parse_dns_query_vulnerable(data, udp_len):
             else:
                 labels.append(label_str)
 
-        if pos > udp_len + 200:
-            break
-
     domain = '.'.join(labels) if labels else ""
 
     # Now determine digest and leaked bytes
@@ -115,7 +119,7 @@ def parse_dns_query_vulnerable(data, udp_len):
     qtype = 1
     qclass = 1
 
-    # Try to read QTYPE and QCLASS
+    # Try to read QTYPE and QCLASS (THIS IS WHERE THE LEAK HAPPENS)
     qtype_pos = pos
 
     if qtype_pos + 4 <= len(data):
@@ -144,7 +148,6 @@ def parse_dns_query_vulnerable(data, udp_len):
         leaked_bytes = max(0, total_overread - digest_bytes)
 
     return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_bytes
-
 
 def is_blocked(domain):
     """Check if domain is on blocklist"""
