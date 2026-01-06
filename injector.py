@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-DNS Injector with Wallbleed Vulnerability
+DNS Injector with Wallbleed Vulnerability - blackbox.c compatible
 
-Simulates GFW DNS injection with the Wallbleed buffer overread bug.
-No bounds checking - reads past packet boundary and leaks memory.
+Replicates GFW DNS injection bug for validation against reference implementation.
+Uses same placeholder format as blackbox.c for byte-exact comparison.
 
 Usage: python injector.py <listen_port>
 Example: python injector.py 9000
@@ -11,7 +11,6 @@ Example: python injector.py 9000
 
 import sys
 import socket
-import threading
 
 # Blocklist from Wallbleed paper
 BLOCKLIST = {
@@ -28,14 +27,15 @@ BLOCKLIST = {
 }
 
 
-def parse_dns_query(data, udp_len):
+def parse_dns_query_vulnerable(data, udp_len):
     """
     VULNERABLE DNS parser - mimics GFW bug
 
-    No bounds checking - reads past packet boundary
+    Returns:
+        (txid, domain, qtype, qclass, question_bytes, digest_bytes, leaked_bytes)
     """
     if udp_len < 12:
-        return None, None, None, None, None, 0
+        return None, None, None, None, None, 0, 0
 
     # Transaction ID
     txid = int.from_bytes(data[0:2], 'big')
@@ -44,7 +44,7 @@ def parse_dns_query(data, udp_len):
     labels = []
     pos = 12
     qname_bytes = bytearray()
-    overread_count = 0
+    total_bytes_read = 0
 
     while True:
         # BUG: No bounds checking
@@ -52,12 +52,13 @@ def parse_dns_query(data, udp_len):
             break
 
         length = data[pos]
-        qname_bytes.append(length)
-        pos += 1
 
-        # Track if we've gone past UDP packet length
-        if pos > udp_len:
-            overread_count = pos - udp_len
+        # Add length byte to qname_bytes (only if within packet)
+        if pos < udp_len:
+            qname_bytes.append(length)
+
+        pos += 1
+        total_bytes_read += 1
 
         if length == 0:
             break
@@ -70,45 +71,79 @@ def parse_dns_query(data, udp_len):
 
             byte_val = data[pos + i]
             label_bytes.append(byte_val)
-            qname_bytes.append(byte_val)
 
-            if pos + i >= udp_len:
-                overread_count += 1
+            # Only add to qname_bytes if within original packet
+            if pos + i < udp_len:
+                qname_bytes.append(byte_val)
+
+            total_bytes_read += 1
+
+        # CRITICAL: Advance position by length FIRST
+        pos += length
 
         if label_bytes:
-            label_str = label_bytes.decode('ascii', errors='replace')
+            # Check for null byte - truncate and STOP
+            if b'\x00' in label_bytes:
+                null_pos = label_bytes.index(b'\x00')
+                label_bytes = label_bytes[:null_pos]
 
-            # Flatten the label (GFW blocklist matching)
-            # Both dots and nulls are treated as separators
-            if b'\x00' in label_bytes or b'.' in label_bytes:
-                # Split on both null and dot
-                parts = label_str.replace('\x00', '.').split('.')
-                # Filter out empty parts
-                parts = [p for p in parts if p]
-                labels.extend(parts)
-                # If we found a null, stop parsing
-                if b'\x00' in label_bytes:
-                    break
+                if label_bytes:
+                    label_str = label_bytes.decode('ascii', errors='replace')
+                    if b'.' in label_bytes:
+                        labels.extend(label_str.split('.'))
+                    else:
+                        labels.append(label_str)
+
+                # STOP parsing (pos already advanced above)
+                break
+
+            # No null byte - normal label
+            label_str = label_bytes.decode('ascii', errors='replace')
+            if b'.' in label_bytes:
+                labels.extend(label_str.split('.'))
             else:
                 labels.append(label_str)
-
-        pos += length
 
         if pos > udp_len + 200:
             break
 
     domain = '.'.join(labels) if labels else ""
 
-    # Get QTYPE and QCLASS
-    if pos + 4 <= len(data):
-        qtype = int.from_bytes(data[pos:pos + 2], 'big')
-        qclass = int.from_bytes(data[pos + 2:pos + 4], 'big')
-        qname_bytes.extend(data[pos:pos + 4])
-    else:
-        qtype = 1
-        qclass = 1
+    # Now determine digest and leaked bytes
+    digest_bytes = 0
+    leaked_bytes = 0
+    qtype = 1
+    qclass = 1
 
-    return txid, domain, qtype, qclass, bytes(qname_bytes), overread_count
+    # Try to read QTYPE and QCLASS
+    qtype_pos = pos
+
+    if qtype_pos + 4 <= len(data):
+        qtype = int.from_bytes(data[qtype_pos:qtype_pos + 2], 'big')
+        qclass = int.from_bytes(data[qtype_pos + 2:qtype_pos + 4], 'big')
+
+        # Add to qname_bytes only if within packet
+        if qtype_pos < udp_len:
+            bytes_to_add = min(4, udp_len - qtype_pos)
+            qname_bytes.extend(data[qtype_pos:qtype_pos + bytes_to_add])
+
+            # Check if QTYPE/QCLASS extend past packet
+            if qtype_pos + 4 > udp_len:
+                digest_bytes = (qtype_pos + 4) - udp_len
+        elif qtype_pos >= udp_len:
+            # QTYPE/QCLASS are entirely in leaked memory
+            digest_bytes = 4
+    else:
+        # QTYPE/QCLASS missing - would be digest bytes
+        bytes_available = len(data) - qtype_pos
+        digest_bytes = min(4, bytes_available)
+
+    # Calculate leaked bytes
+    if total_bytes_read + 12 > udp_len:
+        total_overread = (total_bytes_read + 12) - udp_len
+        leaked_bytes = max(0, total_overread - digest_bytes)
+
+    return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_bytes
 
 
 def is_blocked(domain):
@@ -125,42 +160,79 @@ def is_blocked(domain):
     return False
 
 
-def build_fake_response(txid, question_bytes, overread_bytes, fake_ip='127.0.0.1'):
-    """Build fake DNS response with leaked memory"""
+def build_fake_response(txid, question_bytes, digest_bytes, leaked_bytes, qtype=1):
+    """
+    Build fake DNS response matching blackbox.c format
+
+    Uses placeholder values:
+    - 'D' for digest bytes
+    - 'X' for leaked memory bytes
+    - 'T' for TTL
+    - '4' for IPv4, '6' for IPv6
+    """
     response = bytearray()
 
     # Header
     response.extend(txid.to_bytes(2, 'big'))
-    response.extend(b'\x81\x80')
-    response.extend(b'\x00\x01')
-    response.extend(b'\x00\x01')
-    response.extend(b'\x00\x00')
-    response.extend(b'\x00\x00')
+    response.extend(b'\x81\x80')  # Flags
+    response.extend(b'\x00\x01')  # QDCOUNT = 1
+    response.extend(b'\x00\x01')  # ANCOUNT = 1
+    response.extend(b'\x00\x00')  # NSCOUNT = 0
+    response.extend(b'\x00\x00')  # ARCOUNT = 0
 
     # Question section - includes overread bytes
     response.extend(question_bytes)
 
+    # Add digest bytes (QTYPE/QCLASS read past boundary)
+    if digest_bytes > 0:
+        response.extend(b'D' * digest_bytes)
+
+    # Add leaked memory bytes
+    if leaked_bytes > 0:
+        # Cap at 124 bytes total leaked (as per blackbox.c)
+        max_leaked = min(leaked_bytes, 124 - digest_bytes)
+        response.extend(b'X' * max_leaked)
+
     # Answer section
-    response.extend(b'\xc0\x0c')
-    response.extend(b'\x00\x01')
-    response.extend(b'\x00\x01')
-    response.extend(b'\x00\x00\x00\x3c')
-    response.extend(b'\x00\x04')
+    response.extend(b'\xc0\x0c')  # Compression pointer to QNAME
 
-    # Fake IP
-    ip_bytes = bytes([int(x) for x in fake_ip.split('.')])
-    response.extend(ip_bytes)
+    # RTYPE
+    if qtype == 0x1c:  # AAAA record
+        response.extend(b'\x00\x1c')
+    else:  # A record
+        response.extend(b'\x00\x01')
 
-    # Add leaked memory (simulated as 'X' bytes)
-    if overread_bytes > 0:
-        leaked_memory = b'X' * min(overread_bytes, 124)
-        response.extend(leaked_memory)
+    response.extend(b'\x00\x01')  # CLASS = IN
+    response.extend(b'TTTT')  # TTL placeholder (4 bytes)
+
+    # RDLENGTH and RDATA
+    if qtype == 0x1c:  # IPv6
+        response.extend(b'\x00\x10')  # RDLENGTH = 16
+        response.extend(b'6' * 16)  # IPv6 placeholder
+    else:  # IPv4
+        response.extend(b'\x00\x04')  # RDLENGTH = 4
+        response.extend(b'4' * 4)  # IPv4 placeholder
 
     return bytes(response)
 
 
-def injector_thread(listen_port):
-    """Injector that listens and responds to queries"""
+def main():
+    if len(sys.argv) != 2:
+        print("Usage: python injector.py <listen_port>")
+        print("Example: python injector.py 9000")
+        sys.exit(1)
+
+    listen_port = int(sys.argv[1])
+
+    print("=" * 60)
+    print("DNS Injector (Vulnerable) - blackbox.c compatible")
+    print("=" * 60)
+    print(f"Port: {listen_port}")
+    print(f"Blocklist: {len(BLOCKLIST)} domains")
+    print("=" * 60)
+    print()
+
+    # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', listen_port))
 
@@ -175,12 +247,14 @@ def injector_thread(listen_port):
             data, addr = sock.recvfrom(4096)
             udp_len = len(data)
 
-            # Copy packet to simulated memory buffer with "leaked" data after it
+            # Copy packet to simulated memory buffer
             memory_buffer[:udp_len] = data
+            # Fill with 'X' (simulated leaked memory)
             memory_buffer[udp_len:udp_len + 200] = b'X' * 200
 
             # Parse query using vulnerable parser
-            txid, domain, qtype, qclass, question_bytes, overread = parse_dns_query(memory_buffer, udp_len)
+            result = parse_dns_query_vulnerable(memory_buffer, udp_len)
+            txid, domain, qtype, qclass, question_bytes, digest_bytes, leaked_bytes = result
 
             if domain is None:
                 continue
@@ -191,43 +265,26 @@ def injector_thread(listen_port):
             if is_blocked(domain):
                 print(f"[BLOCKED] {domain}")
 
-                # Build and send fake response with leaked memory
-                fake_response = build_fake_response(txid, question_bytes, overread, '127.0.0.1')
+                # Build and send fake response
+                fake_response = build_fake_response(
+                    txid, question_bytes, digest_bytes, leaked_bytes, qtype
+                )
                 sock.sendto(fake_response, addr)
 
-                if overread > 0:
-                    print(f"[INJECTED] {len(fake_response)} bytes (leaked: {overread} bytes)")
-                else:
-                    print(f"[INJECTED] {len(fake_response)} bytes")
+                print(f"[INJECTED] {len(fake_response)} bytes "
+                      f"(digest: {digest_bytes}, leaked: {leaked_bytes})")
             else:
                 print(f"[ALLOWED] {domain}")
 
             print()
 
+        except KeyboardInterrupt:
+            print("\n\nStopping injector...")
+            break
         except Exception as e:
             print(f"[ERROR] {e}")
-
-
-def main():
-    if len(sys.argv) != 2:
-        print("Usage: python injector.py <listen_port>")
-        print("Example: python injector.py 9000")
-        sys.exit(1)
-
-    listen_port = int(sys.argv[1])
-
-    print("=" * 60)
-    print("DNS Injector (Vulnerable)")
-    print("=" * 60)
-    print(f"Port: {listen_port}")
-    print(f"Blocklist: {len(BLOCKLIST)} domains")
-    print("=" * 60)
-    print()
-
-    try:
-        injector_thread(listen_port)
-    except KeyboardInterrupt:
-        print("\n\nStopping injector...")
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":
