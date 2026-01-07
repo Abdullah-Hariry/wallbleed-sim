@@ -1,0 +1,18 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     blackbox
+relocations:
+  - { offsetInCU: 0x26, offset: 0x26, size: 0x8, addend: 0x0, symName: _print_escaped, symObjAddr: 0x0, symBinAddr: 0x100000CE4, symSize: 0x134 }
+  - { offsetInCU: 0x4D, offset: 0x4D, size: 0x8, addend: 0x0, symName: _BLOCKLIST_REGEX, symObjAddr: 0x31E8, symBinAddr: 0x100008000, symSize: 0x0 }
+  - { offsetInCU: 0x6D, offset: 0x6D, size: 0x8, addend: 0x0, symName: _TESTS_UNPATCHED, symObjAddr: 0x31F0, symBinAddr: 0x100004098, symSize: 0x0 }
+  - { offsetInCU: 0x113, offset: 0x113, size: 0x8, addend: 0x0, symName: _NUM_TESTS_UNPATCHED, symObjAddr: 0x2D28, symBinAddr: 0x100003AD8, symSize: 0x0 }
+  - { offsetInCU: 0x12E, offset: 0x12E, size: 0x8, addend: 0x0, symName: _TESTS_PATCHED, symObjAddr: 0x3DC0, symBinAddr: 0x100004C68, symSize: 0x0 }
+  - { offsetInCU: 0x150, offset: 0x150, size: 0x8, addend: 0x0, symName: _NUM_TESTS_PATCHED, symObjAddr: 0x31E0, symBinAddr: 0x100003F90, symSize: 0x0 }
+  - { offsetInCU: 0x179, offset: 0x179, size: 0x8, addend: 0x0, symName: _print_escaped, symObjAddr: 0x0, symBinAddr: 0x100000CE4, symSize: 0x134 }
+  - { offsetInCU: 0x1C7, offset: 0x1C7, size: 0x8, addend: 0x0, symName: _append, symObjAddr: 0x134, symBinAddr: 0x100000E18, symSize: 0x80 }
+  - { offsetInCU: 0x227, offset: 0x227, size: 0x8, addend: 0x0, symName: _get_uint16, symObjAddr: 0x1B4, symBinAddr: 0x100000E98, symSize: 0x28 }
+  - { offsetInCU: 0x24F, offset: 0x24F, size: 0x8, addend: 0x0, symName: _put_uint16, symObjAddr: 0x1DC, symBinAddr: 0x100000EC0, symSize: 0x30 }
+  - { offsetInCU: 0x281, offset: 0x281, size: 0x8, addend: 0x0, symName: _name_is_censored, symObjAddr: 0x20C, symBinAddr: 0x100000EF0, symSize: 0x44 }
+  - { offsetInCU: 0x2B7, offset: 0x2B7, size: 0x8, addend: 0x0, symName: _response, symObjAddr: 0x250, symBinAddr: 0x100000F34, symSize: 0x508 }
+  - { offsetInCU: 0x3E7, offset: 0x3E7, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x758, symBinAddr: 0x10000143C, symSize: 0x564 }
+...

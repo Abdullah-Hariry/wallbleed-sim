@@ -1,0 +1,14 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     vul-parser
+relocations:
+  - { offsetInCU: 0x26, offset: 0x26, size: 0x8, addend: 0x0, symName: _usage, symObjAddr: 0x0, symBinAddr: 0x100003180, symSize: 0x40 }
+  - { offsetInCU: 0x41, offset: 0x41, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x53C, symBinAddr: 0x1000036BC, symSize: 0x370 }
+  - { offsetInCU: 0x66, offset: 0x66, size: 0x8, addend: 0x0, symName: _main.long_options, symObjAddr: 0xD88, symBinAddr: 0x100008000, symSize: 0x0 }
+  - { offsetInCU: 0x1A8, offset: 0x1A8, size: 0x8, addend: 0x0, symName: _usage, symObjAddr: 0x0, symBinAddr: 0x100003180, symSize: 0x40 }
+  - { offsetInCU: 0x1CC, offset: 0x1CC, size: 0x8, addend: 0x0, symName: _extract_qclass_qtype, symObjAddr: 0x40, symBinAddr: 0x1000031C0, symSize: 0xE0 }
+  - { offsetInCU: 0x228, offset: 0x228, size: 0x8, addend: 0x0, symName: _extract_qname, symObjAddr: 0x120, symBinAddr: 0x1000032A0, symSize: 0x270 }
+  - { offsetInCU: 0x2CA, offset: 0x2CA, size: 0x8, addend: 0x0, symName: _extract_question, symObjAddr: 0x390, symBinAddr: 0x100003510, symSize: 0x3C }
+  - { offsetInCU: 0x318, offset: 0x318, size: 0x8, addend: 0x0, symName: _process_packet, symObjAddr: 0x3CC, symBinAddr: 0x10000354C, symSize: 0x14C }
+  - { offsetInCU: 0x3DA, offset: 0x3DA, size: 0x8, addend: 0x0, symName: __OSSwapInt16, symObjAddr: 0x518, symBinAddr: 0x100003698, symSize: 0x24 }
+...
