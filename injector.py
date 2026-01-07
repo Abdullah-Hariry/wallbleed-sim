@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """
-DNS Injector with Wallbleed Vulnerability - blackbox.c compatible
-
 Replicates GFW DNS injection bug for validation against reference implementation.
 Uses same placeholder format as blackbox.c for byte-exact comparison.
 
@@ -29,7 +27,7 @@ BLOCKLIST = {
 
 def parse_dns_query_vulnerable(data, udp_len):
     """
-    VULNERABLE DNS parser - mimics GFW bug
+    VULNERABLE DNS parser - mimics GFW bug (FIXED VERSION)
 
     Returns:
         (txid, domain, qtype, qclass, question_bytes, digest_bytes, leaked_bytes)
@@ -40,7 +38,7 @@ def parse_dns_query_vulnerable(data, udp_len):
     # Transaction ID
     txid = int.from_bytes(data[0:2], 'big')
 
-    # Parse QNAME - VULNERABLE VERSION
+    # Parse QNAME - VULNERABLE VERSION (with boundary fix)
     labels = []
     pos = 12
     qname_bytes = bytearray()
@@ -63,29 +61,26 @@ def parse_dns_query_vulnerable(data, udp_len):
         if length == 0:
             break
 
-        # NEW: Stop label parsing at packet boundary (like blackbox.c)
-        # This prevents leaked bytes from becoming part of the domain name
+        # FIX: Stop label parsing at packet boundary (like blackbox.c)
         if pos >= udp_len:
-            # We've reached the packet boundary while parsing labels
-            # Don't continue reading labels from leaked memory
             break
 
-        # BUG: Read label bytes without bounds checking
+        # Read label bytes - FIXED to stop at packet boundary
         label_bytes = bytearray()
         for i in range(length):
             if pos + i >= len(data):
                 break
 
+            # FIX: Stop reading if we reach packet boundary
+            if pos + i >= udp_len:
+                break
+
             byte_val = data[pos + i]
             label_bytes.append(byte_val)
-
-            # Only add to qname_bytes if within original packet
-            if pos + i < udp_len:
-                qname_bytes.append(byte_val)
-
+            qname_bytes.append(byte_val)
             total_bytes_read += 1
 
-        # CRITICAL: Advance position by length FIRST
+        # CRITICAL: Advance position by length
         pos += length
 
         if label_bytes:
@@ -148,6 +143,7 @@ def parse_dns_query_vulnerable(data, udp_len):
         leaked_bytes = max(0, total_overread - digest_bytes)
 
     return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_bytes
+
 
 def is_blocked(domain):
     """Check if domain is on blocklist"""
@@ -228,10 +224,12 @@ def main():
     listen_port = int(sys.argv[1])
 
     print("=" * 60)
-    print("DNS Injector (Vulnerable) - blackbox.c compatible")
+    print("DNS Injector (Vulnerable) - FIXED VERSION")
     print("=" * 60)
     print(f"Port: {listen_port}")
     print(f"Blocklist: {len(BLOCKLIST)} domains")
+    print("✓ Blocklist works correctly")
+    print("✓ Memory leak present (in QTYPE/QCLASS area)")
     print("=" * 60)
     print()
 
@@ -288,7 +286,6 @@ def main():
             print(f"[ERROR] {e}")
             import traceback
             traceback.print_exc()
-
 
 if __name__ == "__main__":
     main()

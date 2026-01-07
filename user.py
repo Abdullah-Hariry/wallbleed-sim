@@ -19,8 +19,9 @@ from dnsUtils import send_query, receive_response
 
 
 def parse_hex_input(hex_string):
-    """Parse hex string input, removing spaces"""
-    cleaned = hex_string.replace(' ', '').replace('\n', '')
+    """Parse hex string input, removing ALL whitespace"""
+    # Remove ALL whitespace characters (spaces, tabs, newlines)
+    cleaned = ''.join(hex_string.split())
     try:
         return bytes.fromhex(cleaned)
     except ValueError as e:
@@ -56,7 +57,7 @@ def run_single_query(sock, query_bytes, resolver_host, resolver_port):
     send_query(sock, query_bytes, resolver_host, resolver_port)
 
     # Receive response
-    response_bytes, server_addr = receive_response(sock, timeout=5.0)
+    response_bytes, server_addr = receive_response(sock, timeout=0.5)
 
     if response_bytes is None:
         print("No response (timeout)")
@@ -72,30 +73,55 @@ def read_tests_file(filename):
     """
     Read tests from file. Format:
     - Lines starting with # are comments
-    - Empty lines are ignored
-    - Other lines are hex queries
+    - Empty lines separate tests
+    - Other lines are hex (can span multiple lines)
     """
     tests = []
+    current_hex = ""
+    start_line = None
 
     try:
         with open(filename, 'r') as f:
-            for line_num, line in enumerate(f, 1):
-                line = line.strip()
+            lines = f.readlines()
 
-                # Skip comments and empty lines
-                if not line or line.startswith('#'):
+            for line_num, line in enumerate(lines, 1):
+                stripped = line.strip()
+
+                # If we hit a comment or empty line, save accumulated hex
+                if not stripped or stripped.startswith('#'):
+                    if current_hex:
+                        # Parse accumulated hex
+                        query_bytes = parse_hex_input(current_hex)
+                        if query_bytes:
+                            tests.append({
+                                'line': start_line,
+                                'hex': current_hex,
+                                'bytes': query_bytes
+                            })
+                        else:
+                            print(f"WARNING: Skipping invalid hex starting at line {start_line}")
+
+                        # Reset for next test
+                        current_hex = ""
+                        start_line = None
                     continue
 
-                # Try to parse as hex
-                query_bytes = parse_hex_input(line)
+                # Accumulate hex (remove all spaces)
+                if not current_hex:
+                    start_line = line_num
+                current_hex += stripped.replace(' ', '')
+
+            # Don't forget the last test if file doesn't end with empty line
+            if current_hex:
+                query_bytes = parse_hex_input(current_hex)
                 if query_bytes:
                     tests.append({
-                        'line': line_num,
-                        'hex': line,
+                        'line': start_line,
+                        'hex': current_hex,
                         'bytes': query_bytes
                     })
                 else:
-                    print(f"WARNING: Skipping invalid hex on line {line_num}")
+                    print(f"WARNING: Skipping invalid hex starting at line {start_line}")
 
         return tests
     except FileNotFoundError:
@@ -113,9 +139,9 @@ def run_tests_from_file(resolver_host, resolver_port, tests_file):
     if tests is None:
         return
 
-    print(f"{'=' * 60}")
+    print(f"{'='*60}")
     print(f"Running {len(tests)} tests from {tests_file}")
-    print(f"{'=' * 60}")
+    print(f"{'='*60}")
     print()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -125,9 +151,9 @@ def run_tests_from_file(resolver_host, resolver_port, tests_file):
 
     try:
         for i, test in enumerate(tests):
-            print(f"{'=' * 60}")
+            print(f"{'='*60}")
             print(f"Test {i} (line {test['line']})")
-            print(f"{'=' * 60}")
+            print(f"{'='*60}")
 
             success = run_single_query(sock, test['bytes'], resolver_host, resolver_port)
 
@@ -142,9 +168,9 @@ def run_tests_from_file(resolver_host, resolver_port, tests_file):
         sock.close()
 
     # Summary
-    print(f"{'=' * 60}")
+    print(f"{'='*60}")
     print(f"Test Summary: {passed} passed, {failed} failed (total: {len(tests)})")
-    print(f"{'=' * 60}")
+    print(f"{'='*60}")
 
 
 def main():
