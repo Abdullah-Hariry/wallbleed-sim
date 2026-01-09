@@ -213,7 +213,7 @@ def main():
     listen_port = int(sys.argv[1])
 
     print("=" * 60)
-    print("DNS Injector (Vulnerable) - FIXED VERSION")
+    print("DNS Injector")
     print("=" * 60)
     print(f"Port: {listen_port}")
     print(f"Blocklist: {len(BLOCKLIST)} domains")
