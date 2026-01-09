@@ -103,8 +103,8 @@ python user.py localhost 9000 "000001200001000000000000023639026d750000"
 ```
 
 **Expected:**
-- ✅ Parser tries to read QTYPE/QCLASS beyond packet end
-- ✅ 4 digest bytes leaked
+-  Parser tries to read QTYPE/QCLASS beyond packet end
+- 4 digest bytes leaked
 
 **Output:**
 ```
