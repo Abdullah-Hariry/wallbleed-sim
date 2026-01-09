@@ -470,7 +470,6 @@ This implementation demonstrates:
 
 - **Wallbleed Paper**: Fan et al., "Wallbleed: Memory Disclosure in the Great Firewall's DNS Injection Infrastructure," NDSS 2025
 - **Reference Implementation**: blackbox.c from the Wallbleed study
-- **DNS Specification**: RFC 1035
 
 ## License
 
