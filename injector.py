@@ -151,13 +151,22 @@ def parse_dns_query_vulnerable(data, udp_len):
 
     return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_in_labels
 
+
 def is_blocked(domain):
     """Check if domain is on blocklist"""
     domain_lower = domain.lower().rstrip('.')
 
+    # Exact match
     if domain_lower in BLOCKLIST:
         return True
 
+    # Start-anchored patterns (for entries like 3.tt, 4.tt)
+    START_ANCHORED = {'3.tt', '4.tt', 'shadowvpn.com'}
+    for pattern in START_ANCHORED:
+        if domain_lower.startswith(pattern):
+            return True
+
+    # Suffix match (subdomain)
     for blocked in BLOCKLIST:
         if domain_lower.endswith('.' + blocked):
             return True
