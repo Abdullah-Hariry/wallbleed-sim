@@ -80,10 +80,10 @@ python user.py localhost 9000 "000001200001000000000000023639026d75000001000001"
 ```
 
 **Expected:**
-- ✅ Domain extracted: `69.mu`
-- ✅ Blocklist match: YES
-- ✅ Injection occurs
-- ✅ No memory leaked (complete packet)
+- Domain extracted: `69.mu`
+- Blocklist match: YES
+- Injection occurs
+- No memory leaked (complete packet)
 
 **Output:**
 ```
@@ -124,9 +124,9 @@ python user.py localhost 9000 "0000010000010000000000000261610161016101610161016
 ```
 
 **Expected:**
-- ✅ 0xFF byte triggers 255-byte overread
-- ✅ 124 bytes total leaked (4 digest + 120 leaked)
-- ✅ Matches `4.tt` on blocklist
+-  0xFF byte triggers 255-byte overread
+- 124 bytes total leaked (4 digest + 120 leaked)
+- Matches `4.tt` on blocklist
 
 **Output:**
 ```
@@ -282,14 +282,6 @@ Our implementation was validated against `blackbox.c`, the reference implementat
   - Long domain names (14 tests)
   - Maximum overread (13 tests)
   - Edge cases (6 tests)
-
-### Key Findings
-
-- ✅ Successfully replicates buffer overread behavior
-- ✅ Correctly implements label flattening
-- ✅ Accurate memory disclosure calculation
-- ✅ Blocklist matching works as expected
-- ✅ Maximum 124-byte leakage observed (matches GFW)
 
 ## File Descriptions
 
