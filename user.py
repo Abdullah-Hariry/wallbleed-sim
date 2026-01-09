@@ -1,27 +1,59 @@
 #!/usr/bin/env python3
 """
-User Program - DNS Query Tool (Raw Hex Mode Only)
-Minimal output - just shows query and response
-
-Usage:
-  Single query: python user.py <resolver_host> <resolver_port> <hex_query>
-  Run tests:    python user.py <resolver_host> <resolver_port> <tests_file.txt>
-
-Example:
-  python user.py localhost 9000 0000012000010000000000000866616365626f6f6b03636f6d0000010001
-  python user.py localhost 9000 tests.txt
+DNS Query Tool - sends queries from file or command line
 """
 
 import sys
 import socket
-import os
 from dnsUtils import send_query, receive_response
 
 
+def read_tests_file(filename):
+    """
+    Read test queries from file.
+    Accumulates hex across multiple lines until blank line or EOF.
+    """
+    tests = []
+    current_hex = []
+
+    with open(filename, 'r') as f:
+        for line in f:
+            stripped = line.strip()
+
+            # Blank line = end of current query
+            if not stripped:
+                if current_hex:
+                    # Join all accumulated hex
+                    full_hex = ''.join(current_hex)
+                    tests.append(full_hex)
+                    current_hex = []
+                continue
+
+            # Skip comment lines
+            if stripped.startswith('#'):
+                continue
+
+            # Accumulate hex (strip all whitespace)
+            hex_part = ''.join(stripped.split())
+            current_hex.append(hex_part)
+
+        # Don't forget last query if file doesn't end with blank line
+        if current_hex:
+            full_hex = ''.join(current_hex)
+            tests.append(full_hex)
+
+    return tests
+
+
 def parse_hex_input(hex_string):
-    """Parse hex string input, removing ALL whitespace"""
-    # Remove ALL whitespace characters (spaces, tabs, newlines)
+    """Convert hex string to bytes, handling various formats"""
+    # Remove all whitespace
     cleaned = ''.join(hex_string.split())
+
+    # Remove common prefixes/formatting
+    cleaned = cleaned.replace('0x', '')
+    cleaned = cleaned.replace('\\x', '')
+
     try:
         return bytes.fromhex(cleaned)
     except ValueError as e:
@@ -29,185 +61,131 @@ def parse_hex_input(hex_string):
         return None
 
 
-def format_hex_display(data, bytes_per_line=16, bytes_per_group=2):
-    """Format bytes for display in readable hex format"""
-    lines = []
-    for i in range(0, len(data), bytes_per_line):
-        chunk = data[i:i + bytes_per_line]
-
-        # Group bytes
-        hex_groups = []
-        for j in range(0, len(chunk), bytes_per_group):
-            group = chunk[j:j + bytes_per_group]
-            hex_groups.append(group.hex())
-
-        lines.append(' '.join(hex_groups))
-
-    return '\n'.join(lines)
-
-
-def run_single_query(sock, query_bytes, resolver_host, resolver_port):
-    """Run a single DNS query and display results"""
-    # Display query
-    print(f"Query ({len(query_bytes)} bytes):")
-    print(format_hex_display(query_bytes))
-    print()
-
-    # Send query
-    send_query(sock, query_bytes, resolver_host, resolver_port)
-
-    # Receive response
-    response_bytes, server_addr = receive_response(sock, timeout=0.5)
-
-    if response_bytes is None:
-        print("No response (timeout)")
-        return False
-    else:
-        # Display response
-        print(f"Response ({len(response_bytes)} bytes):")
-        print(format_hex_display(response_bytes))
-        return True
-
-
-def read_tests_file(filename):
-    """
-    Read tests from file. Format:
-    - Lines starting with # are comments
-    - Empty lines separate tests
-    - Other lines are hex (can span multiple lines)
-    """
-    tests = []
-    current_hex = ""
-    start_line = None
-
-    try:
-        with open(filename, 'r') as f:
-            lines = f.readlines()
-
-            for line_num, line in enumerate(lines, 1):
-                stripped = line.strip()
-
-                # If we hit a comment or empty line, save accumulated hex
-                if not stripped or stripped.startswith('#'):
-                    if current_hex:
-                        # Parse accumulated hex
-                        query_bytes = parse_hex_input(current_hex)
-                        if query_bytes:
-                            tests.append({
-                                'line': start_line,
-                                'hex': current_hex,
-                                'bytes': query_bytes
-                            })
-                        else:
-                            print(f"WARNING: Skipping invalid hex starting at line {start_line}")
-
-                        # Reset for next test
-                        current_hex = ""
-                        start_line = None
-                    continue
-
-                # Accumulate hex (remove all spaces)
-                if not current_hex:
-                    start_line = line_num
-                current_hex += stripped.replace(' ', '')
-
-            # Don't forget the last test if file doesn't end with empty line
-            if current_hex:
-                query_bytes = parse_hex_input(current_hex)
-                if query_bytes:
-                    tests.append({
-                        'line': start_line,
-                        'hex': current_hex,
-                        'bytes': query_bytes
-                    })
-                else:
-                    print(f"WARNING: Skipping invalid hex starting at line {start_line}")
-
-        return tests
-    except FileNotFoundError:
-        print(f"ERROR: File '{filename}' not found")
-        return None
-    except Exception as e:
-        print(f"ERROR reading file: {e}")
-        return None
-
-
-def run_tests_from_file(resolver_host, resolver_port, tests_file):
-    """Run all tests from a file"""
-    tests = read_tests_file(tests_file)
-
-    if tests is None:
-        return
-
-    print(f"{'='*60}")
-    print(f"Running {len(tests)} tests from {tests_file}")
-    print(f"{'='*60}")
-    print()
-
+def run_single_query(host, port, query_bytes):
+    """Send a single query and display results"""
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    passed = 0
-    failed = 0
-
     try:
-        for i, test in enumerate(tests):
-            print(f"{'='*60}")
-            print(f"Test {i} (line {test['line']})")
-            print(f"{'='*60}")
+        print(f"\nSending query: {query_bytes.hex()}")
+        send_query(sock, query_bytes, host, port)
 
-            success = run_single_query(sock, test['bytes'], resolver_host, resolver_port)
+        response_bytes, addr = receive_response(sock, timeout=0.5)
 
-            if success:
-                passed += 1
-            else:
-                failed += 1
+        if response_bytes:
+            print(f"Response from {addr}: {len(response_bytes)} bytes")
+            print(f"Hex: {response_bytes.hex()}")
+        else:
+            print("No response (timeout)")
 
-            print()
+    except Exception as e:
+        print(f"Error: {e}")
 
     finally:
         sock.close()
 
-    # Summary
-    print(f"{'='*60}")
-    print(f"Test Summary: {passed} passed, {failed} failed (total: {len(tests)})")
-    print(f"{'='*60}")
 
+def run_test_file(host, port, filename):
+    """Run all tests from file"""
+    tests = read_tests_file(filename)
 
-def main():
-    # Parse command line arguments
-    if len(sys.argv) != 4:
-        print("Usage:")
-        print("  Single query: python user.py <resolver_host> <resolver_port> <hex_query>")
-        print("  Run tests:    python user.py <resolver_host> <resolver_port> <tests_file.txt>")
-        print("\nExamples:")
-        print("  python user.py localhost 9000 0000012000010000000000000866616365626f6f6b03636f6d0000010001")
-        print("  python user.py localhost 9000 tests.txt")
-        sys.exit(1)
+    if not tests:
+        print("No tests found in file")
+        return
 
-    resolver_host = sys.argv[1]
-    resolver_port = int(sys.argv[2])
-    third_arg = sys.argv[3]
+    print("=" * 60)
+    print(f"Running {len(tests)} tests from {filename}")
+    print("=" * 60)
+    print()
 
-    # Check if third argument is a file
-    if os.path.isfile(third_arg):
-        # Run tests from file
-        run_tests_from_file(resolver_host, resolver_port, third_arg)
-    else:
-        # Treat as hex query (original behavior)
-        query_bytes = parse_hex_input(third_arg)
+    passed = 0
+    failed = 0
+
+    for i, hex_string in enumerate(tests):
+        query_bytes = parse_hex_input(hex_string)
 
         if query_bytes is None:
-            sys.exit(1)
+            print(f"Test {i}: SKIP - Invalid hex")
+            print(f"  Query: {hex_string}")
+            failed += 1
+            continue
 
-        # Create UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         try:
-            run_single_query(sock, query_bytes, resolver_host, resolver_port)
+            send_query(sock, query_bytes, host, port)
+            response_bytes, _ = receive_response(sock, timeout=0.5)
+
+            if response_bytes:
+                # Decode response to show D and X bytes
+                response_display = response_bytes.hex()
+
+                # Try to identify D and X bytes in readable format
+                readable = []
+                for byte in response_bytes:
+                    if byte == ord('D'):
+                        readable.append('D')
+                    elif byte == ord('X'):
+                        readable.append('X')
+                    elif byte == ord('T'):
+                        readable.append('T')
+                    elif byte == ord('4'):
+                        readable.append('4')
+                    elif byte == ord('6'):
+                        readable.append('6')
+                    else:
+                        readable.append(f'{byte:02x}')
+
+                print(f"Test {i}: Response ({len(response_bytes)} bytes)")
+                print(f"  Query:    {query_bytes.hex()}")
+                print(f"  Response: {response_display}")
+                print(f"  Decoded:  {' '.join(readable)}")
+                passed += 1
+            else:
+                print(f"Test {i}: No response")
+                print(f"  Query:    {query_bytes.hex()}")
+                passed += 1
+
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"Test {i}: ERROR - {e}")
+            print(f"  Query: {query_bytes.hex()}")
+            failed += 1
+
         finally:
             sock.close()
+
+    print()
+    print("=" * 60)
+    print(f"Results: {passed} passed, {failed} failed")
+    print("=" * 60)
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage:")
+        print("  python user.py <host> <port> <hex_query>")
+        print("  python user.py <host> <port> <test_file.txt>")
+        print()
+        print("Examples:")
+        print("  python user.py localhost 9000 000001200001...")
+        print("  python user.py localhost 9000 tests.txt")
+        sys.exit(1)
+
+    host = sys.argv[1]
+    port = int(sys.argv[2])
+    input_arg = sys.argv[3]
+
+    # Check if input is a file
+    try:
+        with open(input_arg, 'r'):
+            # It's a file
+            run_test_file(host, port, input_arg)
+    except FileNotFoundError:
+        # It's a hex string
+        query_bytes = parse_hex_input(input_arg)
+        if query_bytes:
+            run_single_query(host, port, query_bytes)
+        else:
+            print("ERROR: Not a valid file or hex string")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

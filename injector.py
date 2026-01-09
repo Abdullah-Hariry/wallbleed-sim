@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+
 Replicates GFW DNS injection bug for validation against reference implementation.
 Uses same placeholder format as blackbox.c for byte-exact comparison.
 
@@ -27,7 +28,7 @@ BLOCKLIST = {
 
 def parse_dns_query_vulnerable(data, udp_len):
     """
-    VULNERABLE DNS parser - mimics GFW bug (FIXED VERSION)
+    VULNERABLE DNS parser - mimics GFW bug
 
     Returns:
         (txid, domain, qtype, qclass, question_bytes, digest_bytes, leaked_bytes)
@@ -38,112 +39,117 @@ def parse_dns_query_vulnerable(data, udp_len):
     # Transaction ID
     txid = int.from_bytes(data[0:2], 'big')
 
-    # Parse QNAME - VULNERABLE VERSION (with boundary fix)
+    # Parse QNAME - VULNERABLE VERSION
     labels = []
     pos = 12
     qname_bytes = bytearray()
+    name_buf = bytearray()  # 126-byte limit buffer (like blackbox.c)
     total_bytes_read = 0
+    leaked_in_labels = 0
 
     while True:
-        # BUG: No bounds checking against buffer size
+        # Read label length (even if past boundary)
         if pos >= len(data):
             break
 
         length = data[pos]
 
-        # Add length byte to qname_bytes (only if within packet)
+        # Add length byte to qname_bytes
         if pos < udp_len:
             qname_bytes.append(length)
+            total_bytes_read += 1
+        else:
+            qname_bytes.append(length)
+            leaked_in_labels += 1
 
         pos += 1
-        total_bytes_read += 1
 
         if length == 0:
             break
 
-        # FIX: Stop label parsing at packet boundary (like blackbox.c)
-        if pos >= udp_len:
-            break
-
-        # Read label bytes - FIXED to stop at packet boundary
+        # VULNERABILITY: Read label bytes even past packet boundary!
         label_bytes = bytearray()
+        bytes_to_read = length
+
+        # But respect 126-byte name_buf limit
+        space_left = 126 - len(name_buf)
+        if bytes_to_read > space_left:
+            bytes_to_read = space_left
+
         for i in range(length):
             if pos + i >= len(data):
                 break
 
-            # FIX: Stop reading if we reach packet boundary
-            if pos + i >= udp_len:
-                break
-
+            # Keep reading into leaked memory!
             byte_val = data[pos + i]
-            label_bytes.append(byte_val)
-            qname_bytes.append(byte_val)
-            total_bytes_read += 1
 
-        # CRITICAL: Advance position by length
+            # Add to label_bytes only if within name_buf limit
+            if i < bytes_to_read:
+                label_bytes.append(byte_val)
+                name_buf.append(byte_val)
+
+            # Always add to qname_bytes for response
+            qname_bytes.append(byte_val)
+
+            if pos + i < udp_len:
+                total_bytes_read += 1
+            else:
+                leaked_in_labels += 1
+
+        # CRITICAL: Advance position by FULL length
         pos += length
 
         if label_bytes:
-            # Check for null byte - truncate and STOP
+            # Check for null byte
             if b'\x00' in label_bytes:
                 null_pos = label_bytes.index(b'\x00')
                 label_bytes = label_bytes[:null_pos]
 
                 if label_bytes:
                     label_str = label_bytes.decode('ascii', errors='replace')
-                    if b'.' in label_bytes:
+                    if '.' in label_str:
                         labels.extend(label_str.split('.'))
                     else:
                         labels.append(label_str)
-
-                # STOP parsing (pos already advanced above)
                 break
 
-            # No null byte - normal label
+            # Normal label
             label_str = label_bytes.decode('ascii', errors='replace')
-            if b'.' in label_bytes:
+            if '.' in label_str:
                 labels.extend(label_str.split('.'))
             else:
                 labels.append(label_str)
 
+        # Stop if name_buf is full or way past packet
+        if len(name_buf) >= 126 or pos > udp_len + 200:
+            break
+
     domain = '.'.join(labels) if labels else ""
 
-    # Now determine digest and leaked bytes
+    # Read QTYPE and QCLASS (also potentially leaked)
     digest_bytes = 0
-    leaked_bytes = 0
     qtype = 1
     qclass = 1
 
-    # Try to read QTYPE and QCLASS (THIS IS WHERE THE LEAK HAPPENS)
     qtype_pos = pos
 
-    if qtype_pos + 4 <= len(data):
-        qtype = int.from_bytes(data[qtype_pos:qtype_pos + 2], 'big')
-        qclass = int.from_bytes(data[qtype_pos + 2:qtype_pos + 4], 'big')
+    for i in range(4):
+        if qtype_pos + i >= len(data):
+            break
 
-        # Add to qname_bytes only if within packet
-        if qtype_pos < udp_len:
-            bytes_to_add = min(4, udp_len - qtype_pos)
-            qname_bytes.extend(data[qtype_pos:qtype_pos + bytes_to_add])
+        byte_val = data[qtype_pos + i]
+        qname_bytes.append(byte_val)
 
-            # Check if QTYPE/QCLASS extend past packet
-            if qtype_pos + 4 > udp_len:
-                digest_bytes = (qtype_pos + 4) - udp_len
-        elif qtype_pos >= udp_len:
-            # QTYPE/QCLASS are entirely in leaked memory
-            digest_bytes = 4
-    else:
-        # QTYPE/QCLASS missing - would be digest bytes
-        bytes_available = len(data) - qtype_pos
-        digest_bytes = min(4, bytes_available)
+        if qtype_pos + i >= udp_len:
+            digest_bytes += 1
 
-    # Calculate leaked bytes
-    if total_bytes_read + 12 > udp_len:
-        total_overread = (total_bytes_read + 12) - udp_len
-        leaked_bytes = max(0, total_overread - digest_bytes)
+    # Extract QTYPE/QCLASS
+    if digest_bytes < 4:
+        actual_qtype_start = qtype_pos
+        if actual_qtype_start + 1 < len(data):
+            qtype = (data[actual_qtype_start] << 8) | data[actual_qtype_start + 1]
 
-    return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_bytes
-
+    return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_in_labels
 
 def is_blocked(domain):
     """Check if domain is on blocklist"""
@@ -157,7 +163,6 @@ def is_blocked(domain):
             return True
 
     return False
-
 
 def build_fake_response(txid, question_bytes, digest_bytes, leaked_bytes, qtype=1):
     """
@@ -286,6 +291,7 @@ def main():
             print(f"[ERROR] {e}")
             import traceback
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()
