@@ -39,117 +39,93 @@ def parse_dns_query_vulnerable(data, udp_len):
     # Transaction ID
     txid = int.from_bytes(data[0:2], 'big')
 
-    # Parse QNAME - VULNERABLE VERSION
+    # Parse QNAME
     labels = []
     pos = 12
     qname_bytes = bytearray()
-    name_buf = bytearray()  # 126-byte limit buffer (like blackbox.c)
-    total_bytes_read = 0
-    leaked_in_labels = 0
+    name_buf_size = 0
 
-    while True:
-        # Read label length (even if past boundary)
-        if pos >= len(data):
-            break
-
+    # Phase 1: Parse domain labels (stops at null or limit)
+    while pos < len(data):
         length = data[pos]
 
-        # Add length byte to qname_bytes
+        # Add to qname_bytes
         if pos < udp_len:
             qname_bytes.append(length)
-            total_bytes_read += 1
         else:
             qname_bytes.append(length)
-            leaked_in_labels += 1
 
         pos += 1
 
+        # Null terminator or end
         if length == 0:
             break
 
-        # VULNERABILITY: Read label bytes even past packet boundary!
+        # Check 126-byte name_buf limit
+        if name_buf_size + length + 1 > 126:
+            break
+
+        # Read label bytes (only from actual packet for domain)
         label_bytes = bytearray()
-        bytes_to_read = length
-
-        # But respect 126-byte name_buf limit
-        space_left = 126 - len(name_buf)
-        if bytes_to_read > space_left:
-            bytes_to_read = space_left
-
         for i in range(length):
             if pos + i >= len(data):
                 break
 
-            # Keep reading into leaked memory!
             byte_val = data[pos + i]
 
-            # Add to label_bytes only if within name_buf limit
-            if i < bytes_to_read:
-                label_bytes.append(byte_val)
-                name_buf.append(byte_val)
-
-            # Always add to qname_bytes for response
+            # Add to qname_bytes always
             qname_bytes.append(byte_val)
 
+            # Only add to label if within packet
             if pos + i < udp_len:
-                total_bytes_read += 1
-            else:
-                leaked_in_labels += 1
+                label_bytes.append(byte_val)
 
-        # CRITICAL: Advance position by FULL length
         pos += length
 
+        # Add label to domain (only if we got bytes from packet)
         if label_bytes:
-            # Check for null byte
-            if b'\x00' in label_bytes:
-                null_pos = label_bytes.index(b'\x00')
-                label_bytes = label_bytes[:null_pos]
-
-                if label_bytes:
-                    label_str = label_bytes.decode('ascii', errors='replace')
-                    if '.' in label_str:
-                        labels.extend(label_str.split('.'))
-                    else:
-                        labels.append(label_str)
-                break
-
-            # Normal label
             label_str = label_bytes.decode('ascii', errors='replace')
             if '.' in label_str:
                 labels.extend(label_str.split('.'))
             else:
                 labels.append(label_str)
+            name_buf_size += len(label_bytes) + 1
 
-        # Stop if name_buf is full or way past packet
-        if len(name_buf) >= 126 or pos > udp_len + 200:
+        # If we read past packet, stop label parsing
+        if pos > udp_len:
             break
 
     domain = '.'.join(labels) if labels else ""
 
-    # Read QTYPE and QCLASS (also potentially leaked)
+    # Phase 2: Read QTYPE/QCLASS (4 bytes) + 1 extra byte
     digest_bytes = 0
+    leaked_bytes = 0
     qtype = 1
     qclass = 1
 
-    qtype_pos = pos
-
+    # Read QTYPE/QCLASS (4 bytes)
     for i in range(4):
-        if qtype_pos + i >= len(data):
+        if pos >= len(data):
             break
-
-        byte_val = data[qtype_pos + i]
-        qname_bytes.append(byte_val)
-
-        if qtype_pos + i >= udp_len:
+        qname_bytes.append(data[pos])
+        if pos >= udp_len:
             digest_bytes += 1
+        pos += 1
 
-    # Extract QTYPE/QCLASS
+    # Extract QTYPE
     if digest_bytes < 4:
-        actual_qtype_start = qtype_pos
-        if actual_qtype_start + 1 < len(data):
-            qtype = (data[actual_qtype_start] << 8) | data[actual_qtype_start + 1]
+        qtype_start = pos - 4
+        if qtype_start + 1 < len(data):
+            qtype = (data[qtype_start] << 8) | data[qtype_start + 1]
 
-    return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_in_labels
+    # Read 1 extra byte (the 'X')
+    if pos < len(data):
+        qname_bytes.append(data[pos])
+        if pos >= udp_len:
+            leaked_bytes = 1
+        pos += 1
+
+    return txid, domain, qtype, qclass, bytes(qname_bytes), digest_bytes, leaked_bytes
 
 
 def is_blocked(domain):
@@ -160,15 +136,14 @@ def is_blocked(domain):
     if domain_lower in BLOCKLIST:
         return True
 
-    # Start-anchored patterns (for entries like 3.tt, 4.tt)
-    START_ANCHORED = {'3.tt', '4.tt', 'shadowvpn.com'}
-    for pattern in START_ANCHORED:
-        if domain_lower.startswith(pattern):
-            return True
-
-    # Suffix match (subdomain)
+    # Check if domain starts with any blocklist entry
+    # (handles cases like "69.mu.XXXX" matching "69.mu")
     for blocked in BLOCKLIST:
-        if domain_lower.endswith('.' + blocked):
+        # Match if domain is exactly the blocked entry
+        if domain_lower == blocked:
+            return True
+        # Match if domain starts with blocked entry followed by dot
+        if domain_lower.startswith(blocked + '.'):
             return True
 
     return False
